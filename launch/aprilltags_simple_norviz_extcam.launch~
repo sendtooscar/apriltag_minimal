@@ -1,0 +1,28 @@
+<!-- launches gscam, image rectifier, april tags and rviz-->
+<launch>
+  
+  <!-- Set this to your camera's name -->
+  <arg name="cam_name" value="AprilCam" />
+    
+  <!-- Run the april tag minimal node -->
+  <node pkg="apriltag_minimal" type="apriltag_minimal_node" name="apriltag_minimal_node"
+        ns="$(arg cam_name)" output="screen">
+        <param name="tf_prefix" value="Robot1" />
+        <param name="device_id" type="int" value="0" />
+        <param name="tag_size" type="double" value="0.158" />
+        <param name="draw_flag" type="bool" value="false" />
+        <param name="test_cube_flag" type="bool" value="true" />
+        <param name="write_vedio_flag" type="bool" value="false" />
+        <param name="vedio_file_directory" value="$(find apriltag_minimal)/bags/" />
+        <param name="overlay_tfs_flag" type="bool" value="true" />
+        <param name="overlay_measurement_flag" type="bool" value="true" />
+        <param name="apriltag_calib_file" value="$(find apriltag_minimal)/calibrations/logitechc930e_800_448.yml" />
+        <param name="camera_info_url" value="file://$(find apriltag_minimal)/calibrations/logitechc930e_800_448.yml" />
+  </node>
+
+  <!-- Run Rviz -->
+  <!--node name="rviz" pkg="rviz" type="rviz" /-->
+  <!--node name="rviz" pkg="rviz" type="rviz" args="-d $(find apriltag_minimal)/launch/rviz_apriltag.vcg"/-->
+  
+
+</launch>

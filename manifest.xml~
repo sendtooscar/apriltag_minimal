@@ -1,0 +1,23 @@
+<package>
+  <description brief="apriltag_minimal">
+
+	apriltag_minimal
+
+  </description>
+  <author>oscar</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/apriltag_minimal</url>
+  <depend package="sensor_msgs"/>
+  <depend package="geometry_msgs"/>
+  <depend package="tf"/>
+  <depend package="cv_bridge"/>
+  <depend package="camera_info_manager"/>
+  <depend package="image_transport"/>
+  <depend package="roscpp"/>
+  <depend package="camera_info_manager"/>
+  <depend package="camera_calibration_parsers"/>
+
+</package>
+
+

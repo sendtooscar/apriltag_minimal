@@ -1,0 +1,16 @@
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/ROSBUILD_genmsg_cpp.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/ROSBUILD_genmsg_lisp.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/ROSBUILD_gensrv_cpp.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/ROSBUILD_gensrv_lisp.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/apriltag_minimal_node.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/clean-test-results.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/rosbuild_precompile.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/rosbuild_premsgsrvgen.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/rospack_genmsg.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/rospack_genmsg_libexe.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/rospack_gensrv.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/test.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/test-future.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/test-results.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/test-results-run.dir
+/home/oscar/ros_workspace/apriltag_minimal/CMakeFiles/tests.dir

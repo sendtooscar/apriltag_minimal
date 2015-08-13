@@ -1,0 +1,125 @@
+Axes.Enabled=1
+Axes.Length=1
+Axes.Radius=0.1
+Axes.Reference\ Frame=<Fixed Frame>
+Background\ ColorB=0
+Background\ ColorG=0
+Background\ ColorR=0
+Camera\ Config=0.374801 4.40724 14.539 -0.0627707 0.639606 -2.61933
+Camera\ Type=rviz::OrbitViewController
+Camera.Enabled=1
+Camera.Image\ Rendering=background & overlay
+Camera.Image\ Topic=/MyWebCam/image_raw
+Camera.Overlay\ Alpha=0.1
+Camera.Queue\ Size=2
+Camera.Transport\ Hint=raw
+Camera.Zoom\ Factor=1
+Fixed\ Frame=/MyWebCam/MyWebCam
+Grid.Alpha=0.5
+Grid.Cell\ Size=1
+Grid.ColorB=0.5
+Grid.ColorG=0.5
+Grid.ColorR=0.5
+Grid.Enabled=1
+Grid.Line\ Style=0
+Grid.Line\ Width=0.03
+Grid.Normal\ Cell\ Count=0
+Grid.OffsetX=0
+Grid.OffsetY=0
+Grid.OffsetZ=0
+Grid.Plane=0
+Grid.Plane\ Cell\ Count=20
+Grid.Reference\ Frame=<Fixed Frame>
+Marker.11=0
+Marker.12=1
+Marker.20=0
+Marker.21=0
+Marker.Enabled=1
+Marker.Marker\ Topic=/pioneer1/relocNode/relocVizDataRange
+Marker.Queue\ Size=100
+Marker2.11=0
+Marker2.12=0
+Marker2.20=0
+Marker2.21=1
+Marker2.Enabled=1
+Marker2.Marker\ Topic=/pioneer1/relocNode/relocVizDataBear2
+Marker2.Queue\ Size=100
+Property\ Grid\ Splitter=421,0
+Property\ Grid\ State=expanded=.Global Options,Marker.Enabled,Marker.Namespaces,Marker2.Enabled,Marker2.Namespaces;splitterratio=0.5
+QMainWindow=000000ff00000000fd00000003000000000000011d000002f3fc0200000005fc0000001d000001f7000000ee00fffffffa000000010100000002fb0000001800440072006f006e006500540065006c0065006f007000320000000000ffffffff0000011d00fffffffb000000100044006900730070006c00610079007301000000000000015b0000011d00fffffffb0000000c00430061006d006500720061010000021a000000f60000001900fffffffb0000001600440072006f006e006500540065006c0065006f0070000000001d000001980000019800fffffffb0000000e004400610074006100760069007a000000001d000002850000017f00fffffffb00000010004400610074006100760069007a003202000002820000008a0000015b0000018700000001000001330000055bfc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730000000227000001510000006700fffffffb0000000a0056006900650077007300000001be000001d5000000bb00fffffffb0000001200530065006c0065006300740069006f006e0000000299000002df0000006700ffffff00000003000004300000003efc0100000001fb0000000800540069006d0065010000000000000430000002bf00ffffff0000030d000002f300000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+TF.All\ Enabled=1
+TF.Enabled=1
+TF.Frame\ Timeout=1
+TF.Marker\ Scale=0.2
+TF.Show\ Arrows=1
+TF.Show\ Axes=1
+TF.Show\ Names=1
+TF.Update\ Interval=0
+Target\ Frame=/MyWebCam/Tag3
+Tool\ 2D\ Nav\ GoalTopic=/move_base_simple/goal
+Tool\ 2D\ Pose\ EstimateTopic=/pioneer2/initialpose
+[Display0]
+ClassName=rviz::GridDisplay
+Name=Grid
+[Display1]
+ClassName=rviz::AxesDisplay
+Name=Axes
+[Display2]
+ClassName=rviz::TFDisplay
+Name=TF
+[Display3]
+ClassName=rviz::CameraDisplay
+Name=Camera
+[Display4]
+ClassName=rviz::MarkerDisplay
+Name=Marker
+[Display5]
+ClassName=rviz::MarkerDisplay
+Name=Marker2
+[Panel0]
+ClassLookupName=viz_panel1/Dataviz
+Name=Dataviz
+Topic=/pioneer1
+[Panel1]
+ClassLookupName=viz_panel1/Dataviz
+Name=Dataviz2
+Topic=/pioneer2
+[Panel2]
+ClassLookupName=viz_panel1/DroneTeleop
+Name=DroneTeleop
+Topic=
+[Panel3]
+ClassLookupName=viz_panel1/DroneTeleop
+Name=DroneTeleop2
+Topic=
+[TF.Frames.]
+ardrone_base_bottomcam.Enabled=1
+ardrone_base_frontcam.Enabled=1
+ardrone_base_link.Enabled=1
+[TF.Frames./MyWebCam]
+MyWebCam.Enabled=1
+Tag1.Enabled=1
+Tag3.Enabled=1
+[TF.Frames./drone2]
+Tag3.Enabled=1
+base_camx.Enabled=1
+base_reloc2.Enabled=1
+[TF.Frames./pioneer1]
+IRcam.Enabled=1
+IRcamBase.Enabled=1
+Tag1.Enabled=1
+base_IRcamx.Enabled=1
+base_reloc2.Enabled=1
+base_ustx.Enabled=1
+[TF.Frames./pioneer1/base_reloc2]
+US1.Enabled=1
+US2.Enabled=1
+US3.Enabled=1
+US4.Enabled=1
+USAoa.Enabled=1
+USAoa2.Enabled=1
+[Window]
+Height=888
+Width=1088
+X=7618
+Y=-1367

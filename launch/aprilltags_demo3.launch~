@@ -1,0 +1,33 @@
+<!-- launches gscam, image rectifier, april tags and rviz-->
+<launch>
+  
+  <!-- Set this to your camera's name -->
+  <arg name="cam_name" value="MyWebCam" />
+    
+  <!-- Start the GSCAM node -->
+  <env name="GSCAM_CONFIG" value="v4l2src device=/dev/video0 ! video/x-raw-yuv,framerate=30/1,width=1280,height=720 ! ffmpegcolorspace " />
+  <node pkg="gscam" type="gscam" name="$(arg cam_name)">
+    <param name="camera_name" value="$(arg cam_name)" />
+    <param name="camera_parameters_file" value="$(find apriltag_minimal)/calibrations/webcam.txt"/>
+    <param name="camera_info_url" value="$(find apriltag_minimal)/calibrations/webcam.yml" />
+    <param name="frame_id" value="/$(arg cam_name)_frame"/>
+    <remap from="gscam/image_raw" to="/$(arg cam_name)/image_raw" />
+    <remap from="gscam/camera_info" to="$(arg cam_name)/camera_info" />
+  </node>
+
+        <arg name="marker_size" default="12.1" />
+	<arg name="max_new_marker_error" default="0.04" />
+	<arg name="max_track_error" default="0.01" />
+	<arg name="cam_image_topic" default="$(arg cam_name)/image_raw" />
+	<arg name="cam_info_topic" default="$(arg cam_name)/camera_info" />	
+	<arg name="output_frame" default="/$(arg cam_name)_frame" />
+
+	<node name="ar_track_alvar" pkg="ar_track_alvar" type="individualMarkersNoKinect" respawn="false" output="screen" args="$(arg marker_size) $(arg max_new_marker_error) $(arg max_track_error) $(arg cam_image_topic) $(arg cam_info_topic) $(arg output_frame)" />  
+
+   <!-- <node name="rviz" pkg="rviz" type="rviz" args="-d $(find april_tags_node)/config/rviz.vcg" launch-prefix="optirun" /> -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find april_tags_node)/config/rviz.vcg"/>
+  
+
+  <!-- Run the april tag minimal node -->
+
+</launch>

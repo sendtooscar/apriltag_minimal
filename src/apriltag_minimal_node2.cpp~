@@ -1,0 +1,929 @@
+/**
+ * @file april_tags.cpp
+ * @brief Example application for April tags library
+ * @author: Michael Kaess
+ * Ros wrapper : Oscar De silva
+ * Opens the first available camera (typically a built in camera in a
+ * laptop) and continuously detects April tags in the incoming
+ * images. Detections are both visualized in the live image and shown
+ * in the text console. Optionally allows selecting of a specific
+ * camera in case multiple ones are present and specifying image
+ * resolution as long as supported by the camera. Also includes the
+ * option to send tag detections via a serial port, for example when
+ * running on a Raspberry Pi that is connected to an Arduino.
+ */
+
+//TODO: 1. tag name publish - done -todo test -OK
+//	2. camera rectification - done - test by fish eye caliberation -OK (but too much distortion)
+//	3. camera calib file access from parameters - ok
+//      4. Accuracy test -  overlay a cube on 1 marker - cube done (the tag size should be the black box size)
+//                          overlay an axis system
+//      5. Publish camera image for visualization
+
+// Code added
+// Ros node handler
+// ROS tf broad caster
+// ROS parameter access
+// OpenCV image rectification 
+
+
+using namespace std;
+
+#include "ros/ros.h"
+#include <image_transport/image_transport.h>
+#include <camera_info_manager/camera_info_manager.h>
+#include <sensor_msgs/image_encodings.h>
+#include <sensor_msgs/CameraInfo.h>
+#include <cv_bridge/cv_bridge.h>
+#include <iostream>
+#include <cstring>
+#include <vector>
+#include <list>
+#include <string>  
+#include <sys/time.h>
+#include <tf/transform_broadcaster.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+const string usage = "\n"
+  "Usage:\n"
+  "  apriltags_demo [OPTION...] [IMG1 [IMG2...]]\n"
+  "\n"
+  "Options:\n"
+  "  -h  -?          Show help options\n"
+  "  -a              Arduino (send tag ids over serial port)\n"
+  "  -d              Disable graphics\n"
+  "  -t              Timing of tag extraction\n"
+  "  -C <bbxhh>      Tag family (default 36h11)\n"
+  "  -D <id>         Video device ID (if multiple cameras present)\n"
+  "  -F <fx>         Focal length in pixels\n"
+  "  -W <width>      Image width (default 640, availability depends on camera)\n"
+  "  -H <height>     Image height (default 480, availability depends on camera)\n"
+  "  -S <size>       Tag size (square black frame) in meters\n"
+  "  -E <exposure>   Manually set camera exposure (default auto; range 0-10000)\n"
+  "  -G <gain>       Manually set camera gain (default auto; range 0-255)\n"
+  "  -B <brightness> Manually set the camera brightness (default 128; range 0-255)\n"
+  "\n";
+
+const string intro = "\n"
+    "April tags test code\n"
+    "(C) 2012-2014 Massachusetts Institute of Technology\n"
+    "Michael Kaess\n"
+    "\n";
+
+
+#ifndef __APPLE__
+#define EXPOSURE_CONTROL // only works in Linux
+#endif
+
+#ifdef EXPOSURE_CONTROL
+#include <libv4l2.h>
+#include <linux/videodev2.h>
+#include <fcntl.h>
+#include <errno.h>
+#endif
+
+// OpenCV library for easy access to USB camera and drawing of images
+// on screen
+#include "opencv2/opencv.hpp"
+
+// April tags detector and various families that can be selected by command line option
+#include "AprilTags/TagDetector.h"
+#include "AprilTags/Tag16h5.h"
+#include "AprilTags/Tag25h7.h"
+#include "AprilTags/Tag25h9.h"
+#include "AprilTags/Tag36h9.h"
+#include "AprilTags/Tag36h11.h"
+
+
+// Needed for getopt / command line options processing
+#include <unistd.h>
+extern int optind;
+extern char *optarg;
+
+
+
+const char* windowName = "apriltags_demo";
+
+
+
+
+
+// utility function to provide current system time (used below in
+// determining frame rate at which images are being processed)
+double tic() {
+  struct timeval t;
+  gettimeofday(&t, NULL);
+  return ((double)t.tv_sec + ((double)t.tv_usec)/1000000.);
+}
+
+
+std::vector<cv::Point3d> Generate3DPoints()
+{
+  std::vector<cv::Point3d> points;
+  float a=0.191;
+  float b=0.02;
+  float x,y,z;
+ 
+  x=0;y=0;z=0;
+  points.push_back(cv::Point3d(x-b,y-b,z));
+ 
+  x=a;y=0;z=0;
+  points.push_back(cv::Point3d(x-b,y-b,z));
+ 
+  x=a;y=a;z=0;
+  points.push_back(cv::Point3d(x-b,y-b,z));
+ 
+  x=0;y=a;z=0;
+  points.push_back(cv::Point3d(x-b,y-b,z));
+ 
+  x=0;y=0;z=a;
+  points.push_back(cv::Point3d(x-b,y-b,z));
+ 
+  x=a;y=0;z=a;
+  points.push_back(cv::Point3d(x-b,y-b,z));
+ 
+  x=a;y=a;z=a;
+  points.push_back(cv::Point3d(x-b,y-b,z));
+
+  x=0;y=a;z=a;
+  points.push_back(cv::Point3d(x-b,y-b,z));
+ 
+  /*
+  for(unsigned int i = 0; i < points.size(); ++i)
+    {
+    std::cout << points[i] << std::endl;
+    }
+  */
+  return points;
+}
+
+
+#include <cmath>
+
+#ifndef PI
+const double PI = 3.14159265358979323846;
+#endif
+const double TWOPI = 2.0*PI;
+
+/**
+ * Normalize angle to be within the interval [-pi,pi].
+ */
+inline double standardRad(double t) {
+  if (t >= 0.) {
+    t = fmod(t+PI, TWOPI) - PI;
+  } else {
+    t = fmod(t-PI, -TWOPI) + PI;
+  }
+  return t;
+}
+
+/**
+ * Convert rotation matrix to Euler angles
+ */
+void wRo_to_euler(const Eigen::Matrix3d& wRo, double& yaw, double& pitch, double& roll) {
+    yaw = standardRad(atan2(wRo(1,0), wRo(0,0)));
+    double c = cos(yaw);
+    double s = sin(yaw);
+    pitch = standardRad(atan2(-wRo(2,0), wRo(0,0)*c + wRo(1,0)*s));
+    roll  = standardRad(atan2(wRo(0,2)*s - wRo(1,2)*c, -wRo(0,1)*s + wRo(1,1)*c));
+}
+
+
+class Demo {
+
+  AprilTags::TagDetector* m_tagDetector;
+  AprilTags::TagCodes m_tagCodes;
+
+  bool m_draw; 			// draw image and April tag detections?
+  bool m_arduino; 		// send tag detections to serial port?
+  bool m_timing; 		// print timing information for each tag extraction call
+  bool m_test_cube; 		// draws a 3D cube of 190 mm on marker zero 
+  bool m_write_vedio;  		// writes raw and processed vedios to the output file
+  bool m_image_transport; 	// advertise image 
+  std::string    m_vedio_file_directory; 
+  std::string    m_tf_prefix;  // we need this when setting massege frame ids
+  bool    m_overlay_tfs; // overlay the tf frames on vedio (for verification)
+  bool    m_overlay_measurement; // overlay measurements on vedio (for verification)
+
+  int m_width; // image size in pixels
+  int m_height;
+  double m_tagSize; // April tag side length in meters of square black frame
+  double m_fx; // camera focal length in pixels
+  double m_fy;
+  double m_px; // camera principal point
+  double m_py;
+  double m_dist[5];
+  std::string m_camera_name;
+  std::string m_camera_info_url;
+
+  int m_deviceId; // camera id (in case of multiple cameras)
+
+  list<string> m_imgNames;
+
+  cv::VideoCapture m_cap;
+
+  int m_exposure;
+  int m_gain;
+  int m_brightness;
+  
+  
+  cv::Mat m_cameraMatrix, m_distCoeffs;
+  cv::VideoWriter m_outputVideo;    //vediowriter
+  
+  
+  std::vector<cv::Point3d> m_objectPoints;
+  int m_edges1[12];
+  int m_edges2[12];
+  std::vector<cv::Point2d> m_projectedPoints;
+  
+
+public:
+  image_transport::CameraPublisher m_image_pub;
+  boost::shared_ptr<camera_info_manager::CameraInfoManager> m_cinfo;
+  
+  // default constructor
+  Demo(ros::NodeHandle n) :
+    // default settings, most can be modified through command line options (see below)
+    m_tagDetector(NULL),
+    m_tagCodes(AprilTags::tagCodes36h11),
+
+    m_draw(true),
+    m_arduino(false),
+    m_timing(false),
+    m_test_cube(false),
+    m_write_vedio(false),
+    m_image_transport(false), 
+    m_vedio_file_directory(""),
+    m_tf_prefix(""),
+    m_overlay_tfs(false),
+    m_overlay_measurement(false),
+    m_width(640),
+    m_height(480),
+    m_tagSize(0.166),
+    m_fx(600),
+    m_fy(600),
+    m_px(m_width/2),
+    m_py(m_height/2),
+    m_dist{-0.018787, -0.063162, -0.001585, -0.000737, 0.000000},
+    m_camera_name("aprilTagCam"),
+    m_camera_info_url(""),
+    m_deviceId(0),
+    m_exposure(-1),
+    m_gain(-1),
+    m_brightness(-1),
+    m_edges1{0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3},
+    m_edges2{1, 2, 3, 0, 5, 6, 7, 4, 4, 5, 6, 7},
+    m_cinfo(new camera_info_manager::CameraInfoManager(n))
+   {
+         m_objectPoints = Generate3DPoints();
+         image_transport::ImageTransport it(n);
+         m_image_pub=it.advertiseCamera("image_raw", 1); 
+         
+   }
+
+  // changing the tag family
+  void setTagCodes(string s) {
+    if (s=="16h5") {
+      m_tagCodes = AprilTags::tagCodes16h5;
+    } else if (s=="25h7") {
+      m_tagCodes = AprilTags::tagCodes25h7;
+    } else if (s=="25h9") {
+      m_tagCodes = AprilTags::tagCodes25h9;
+    } else if (s=="36h9") {
+      m_tagCodes = AprilTags::tagCodes36h9;
+    } else if (s=="36h11") {
+      m_tagCodes = AprilTags::tagCodes36h11;
+    } else {
+      cout << "Invalid tag family specified" << endl;
+      exit(1);
+    }
+  }
+
+  // parse command line options to change default behavior
+  void parseOptions(int argc, char* argv[]) {
+    int c;
+    while ((c = getopt(argc, argv, ":h?adtC:F:H:S:W:E:G:B:D:")) != -1) {
+      // Each option character has to be in the string in getopt();
+      // the first colon changes the error character from '?' to ':';
+      // a colon after an option means that there is an extra
+      // parameter to this option; 'W' is a reserved character
+      switch (c) {
+      case 'h':
+      case '?':
+        cout << intro;
+        cout << usage;
+        exit(0);
+        break;
+      case 'a':
+        m_arduino = true;
+        break;
+      case 'd':
+        m_draw = false;
+        break;
+      case 't':
+        m_timing = true;
+        break;
+      case 'C':
+        setTagCodes(optarg);
+        break;
+      case 'F':
+        m_fx = atof(optarg);
+        m_fy = m_fx;
+        break;
+      case 'H':
+        m_height = atoi(optarg);
+        m_py = m_height/2;
+         break;
+      case 'S':
+        m_tagSize = atof(optarg);
+        break;
+      case 'W':
+        m_width = atoi(optarg);
+        m_px = m_width/2;
+        break;
+      case 'E':
+#ifndef EXPOSURE_CONTROL
+        cout << "Error: Exposure option (-E) not available" << endl;
+        exit(1);
+#endif
+        m_exposure = atoi(optarg);
+        break;
+      case 'G':
+#ifndef EXPOSURE_CONTROL
+        cout << "Error: Gain option (-G) not available" << endl;
+        exit(1);
+#endif
+        m_gain = atoi(optarg);
+        break;
+      case 'B':
+#ifndef EXPOSURE_CONTROL
+        cout << "Error: Brightness option (-B) not available" << endl;
+        exit(1);
+#endif
+        m_brightness = atoi(optarg);
+        break;
+      case 'D':
+        m_deviceId = atoi(optarg);
+        break;
+      case ':': // unknown option, from getopt
+        cout << intro;
+        cout << usage;
+        exit(1);
+        break;
+      }
+    }
+
+    if (argc > optind) {
+      for (int i=0; i<argc-optind; i++) {
+        m_imgNames.push_back(argv[optind+i]);
+      }
+    }
+  }
+
+  void setup() {
+    m_tagDetector = new AprilTags::TagDetector(m_tagCodes);
+
+    
+  
+    // new code to access ros parameter server
+    
+   
+
+    // for ease all parameters are in the yml file
+    std::string config_file;
+    ros::NodeHandle nh("~");  // private node handle to use with the parameter server
+    printf("Searching camera parameter file...");
+    if (nh.getParam("apriltag_calib_file", config_file))
+    {	  printf("found...");
+    }
+    else{  
+	 printf("not found...");
+         config_file= "/home/oscar/ros_workspace/apriltag_minimal/calibrations/webcam_opencv.yml";
+    }
+
+    printf("Searching camera device id...");
+    if (nh.getParam("device_id", m_deviceId))
+    {	  printf("found...");
+    }
+    else{  
+	 printf("not found...\n");
+         
+    }
+
+    printf("Searching tag size...");
+    if (nh.getParam("tag_size", m_tagSize))
+    {	  printf("found...");
+    }
+    else{  
+	 printf("not found...\n");
+    
+    }
+    
+    /*printf("Searching height...");
+    if (nh.getParam("height", m_height))
+    {	  printf("found...");
+    }
+    else{  
+	 printf("not found...\n");
+    
+    }
+
+ 
+    printf("Searching width...");
+    if (nh.getParam("width", m_width))
+    {	  printf("found...");
+    }
+    else{  
+	 printf("not found...\n");
+    
+    }*/
+    printf("Searching cvdraw flags...");
+    if (nh.getParam("draw_flag", m_draw))
+    {	  printf("found...");
+    }
+    
+    printf("Searching test_cube enable flags...");
+    if (nh.getParam("test_cube_flag", m_test_cube))
+    {	  printf("found...");
+    }
+   
+    printf("Searching write_vedio_flag...");
+    if (nh.getParam("write_vedio_flag", m_write_vedio))
+    {	  printf("found...");
+    }
+   
+    printf("Searching vedio_file_directory...");
+    if (nh.getParam("vedio_file_directory", m_vedio_file_directory))
+    {	  printf("found...");
+    }
+
+    printf("Searching overlay_tfs_flag...");
+    if (nh.getParam("overlay_tfs_flag", m_overlay_tfs))
+    {	  printf("found...");
+    }
+
+    printf("Searching overlay_measurement_flag...");
+    if (nh.getParam("overlay_measurement_flag", m_overlay_measurement))
+    {	  printf("found...");
+    }
+
+    printf("Searching tf_prefix...");
+    if (nh.getParam("tf_prefix", m_tf_prefix))
+    {	  printf("found...");
+    }
+  
+    printf("Searching image_transport ...");
+    if (nh.getParam("image_transport", m_image_transport))
+    {	  printf("found...");
+    }
+
+    printf("Searching camera_info_url ...");
+    if (nh.getParam("camera_info_url", m_camera_info_url))
+    {	  printf("found...");
+    }
+
+
+	
+    cv::FileStorage fs2(config_file, cv::FileStorage::READ);
+    
+    fs2["camera_name"] >> m_camera_name;
+    fs2["camera_matrix"] >> m_cameraMatrix;
+    fs2["distortion_coefficients"] >> m_distCoeffs;
+    //fs2["cam_id"] >> m_deviceId;
+    //fs2["tag_size"] >> m_tagSize;
+    //fs2["draw_image"] >> m_draw;
+    fs2["image_width"] >> m_width; // image size in pixels
+    fs2["image_height"] >> m_height;
+     cout << "camera name: " << m_camera_name << endl
+     << "camera Matrix: " << m_cameraMatrix << endl << "distortion coeffs: " << m_distCoeffs << endl;
+    fs2.release();
+    m_fx = m_cameraMatrix.ptr<double>(0)[0];
+    m_fy = m_cameraMatrix.ptr<double>(1)[1];
+    m_px = m_cameraMatrix.ptr<double>(0)[2];
+    m_py = m_cameraMatrix.ptr<double>(1)[2];
+    cout << m_fx << "," << m_fy << ","   << m_px  <<","  << m_py  << endl;
+    
+    if (m_image_transport) { 
+    m_cinfo->setCameraName(m_camera_name);
+    //m_cinfo->loadCameraInfo("file:///home/oscar/ros_workspace/apriltag_minimal/calibrations/webcam_640_480_opencv.yml");
+    //cout << m_camera_info_url;
+    m_cinfo->loadCameraInfo(m_camera_info_url);
+    }
+ 
+    // prepare window for drawing the camera images
+    if (m_draw) {
+      cv::namedWindow(windowName, 1);
+    }
+
+    //initialize the vedio writer
+    if (m_write_vedio){
+            ros::Time ros_time =ros::Time::now();
+            char buf[1024]      = "";
+            time_t t = ros_time.sec;
+            struct tm *tms = localtime(&t);
+            strftime(buf, 1024, "%Y-%m-%d-%H-%M-%S", tms);
+            std::string NAME =m_vedio_file_directory + "Exp_vedio" +std::string(buf) +".avi";
+	    //if (askOutputType)
+		m_outputVideo.open(NAME, CV_FOURCC('M', 'J', 'P', 'G'), 15.0, cv::Size(m_width,m_height), true);
+	    //else
+	    //	outputVideo.open(NAME, ex, inputVideo.get(CV_CAP_PROP_FPS), S, true);
+                
+
+	    if (!m_outputVideo.isOpened())
+	    {
+		cout  << "Could not open the output video : " << NAME << endl;
+	    }
+            else
+	        cout  << "Writing output video : " << NAME << endl;
+    }
+
+  }
+
+  void setupVideo() {
+
+#ifdef EXPOSURE_CONTROL
+    // manually setting camera exposure settings; OpenCV/v4l1 doesn't
+    // support exposure control; so here we manually use v4l2 before
+    // opening the device via OpenCV; confirmed to work with Logitech
+    // C270; try exposure=20, gain=100, brightness=150
+
+    string video_str = "/dev/video0";
+    video_str[10] = '0' + m_deviceId;
+    int device = v4l2_open(video_str.c_str(), O_RDWR | O_NONBLOCK);
+
+    if (m_exposure >= 0) {
+      // not sure why, but v4l2_set_control() does not work for
+      // V4L2_CID_EXPOSURE_AUTO...
+      struct v4l2_control c;
+      c.id = V4L2_CID_EXPOSURE_AUTO;
+      c.value = 1; // 1=manual, 3=auto; V4L2_EXPOSURE_AUTO fails...
+      if (v4l2_ioctl(device, VIDIOC_S_CTRL, &c) != 0) {
+        cout << "Failed to set... " << strerror(errno) << endl;
+      }
+      cout << "exposure: " << m_exposure << endl;
+      v4l2_set_control(device, V4L2_CID_EXPOSURE_ABSOLUTE, m_exposure*6);
+    }
+    if (m_gain >= 0) {
+      cout << "gain: " << m_gain << endl;
+      v4l2_set_control(device, V4L2_CID_GAIN, m_gain*256);
+    }
+    if (m_brightness >= 0) {
+      cout << "brightness: " << m_brightness << endl;
+      v4l2_set_control(device, V4L2_CID_BRIGHTNESS, m_brightness*256);
+    }
+    v4l2_close(device);
+#endif 
+
+    // find and open a USB camera (built in laptop camera, web cam etc)
+    m_cap = cv::VideoCapture(m_deviceId);
+        if(!m_cap.isOpened()) {
+      cerr << "ERROR: Can't find video device " << m_deviceId << "\n";
+      exit(1);
+    }
+    m_cap.set(CV_CAP_PROP_FRAME_WIDTH, m_width);
+    m_cap.set(CV_CAP_PROP_FRAME_HEIGHT, m_height);
+    cout << "Camera successfully opened (ignore error messages above...)" << endl;
+    cout << "Actual resolution: "
+         << m_cap.get(CV_CAP_PROP_FRAME_WIDTH) << "x"
+         << m_cap.get(CV_CAP_PROP_FRAME_HEIGHT) << "," << m_px << "," << m_py << endl;
+
+  }
+
+  void print_detection(AprilTags::TagDetection& detection) const {
+    cout << "  Id: " << detection.id
+         << " (Hamming: " << detection.hammingDistance << ")";
+
+    // recovering the relative pose of a tag:
+
+    // NOTE: for this to be accurate, it is necessary to use the
+    // actual camera parameters here as well as the actual tag size
+    // (m_fx, m_fy, m_px, m_py, m_tagSize)
+
+    Eigen::Vector3d translation;
+    Eigen::Matrix3d rotation;
+    detection.getRelativeTranslationRotation(m_tagSize, m_fx, m_fy, m_px, m_py,
+                                             translation, rotation);
+
+    Eigen::Matrix3d F;
+    F <<
+      1, 0,  0,
+      0,  -1,  0,
+      0,  0,  1;
+    Eigen::Matrix3d fixed_rot = F*rotation;
+    double yaw, pitch, roll;
+    wRo_to_euler(fixed_rot, yaw, pitch, roll);
+
+    cout << "  distance=" << translation.norm()
+         << "m, x=" << translation(0)
+         << ", y=" << translation(1)
+         << ", z=" << translation(2)
+         << ", yaw=" << yaw
+         << ", pitch=" << pitch
+         << ", roll=" << roll
+         << endl;
+
+    // Also note that for SLAM/multi-view application it is better to
+    // use reprojection error of corner points, because the noise in
+    // this relative pose is very non-Gaussian; see iSAM source code
+    // for suitable factors.
+
+    //publish to ROS
+    //Assemble and Publish 
+    static tf::TransformBroadcaster m_TfBroadcaster;
+    char buffer [33];
+    //itoa (detection.id,buffer,10);
+    sprintf (buffer, "Tag%d", detection.id);
+    cout << buffer << " from " << m_camera_name;
+
+   // m_TfBroadcaster.sendTransform(tf::StampedTransform(tf::Transform(tf::createQuaternionFromRPY(roll,pitch,yaw), tf::Vector3(translation(0), translation(1), translation(2))),ros::Time::now(),m_camera_name,buffer));
+      		    F << -1,    0,   0,
+                          0,    1,   0,
+                          0,    0,  -1;
+                    fixed_rot = F*fixed_rot;
+                     F << -1,    0,   0,
+                          0,    -1,   0,
+                          0,    0,   -1;
+                    fixed_rot = fixed_rot*F;
+                    //double yaw, pitch, roll;
+                    wRo_to_euler(fixed_rot, yaw, pitch, roll);
+      m_TfBroadcaster.sendTransform(tf::StampedTransform(tf::Transform(tf::createQuaternionFromRPY(roll,pitch,yaw), tf::Vector3(-translation(1), -translation(2), translation(0))),ros::Time::now(),m_camera_name,buffer));
+      //Broadcast the world frame
+      F <<  1,    0,   0,
+            0,    0,   1,
+            0,    -1,   0;
+      wRo_to_euler(F, yaw, pitch, roll);
+      m_TfBroadcaster.sendTransform(tf::StampedTransform(tf::Transform(tf::createQuaternionFromRPY(roll,pitch,yaw), tf::Vector3(0.0, 0.0,0.0)),ros::Time::now(),"\World",m_camera_name));
+     //m_TfBroadcaster.sendTransform(tf::StampedTransform(tf::Transform(tf::createQuaternionFromRPY(roll,pitch,yaw), tf::Vector3(translation(0), translation(1), translation(2))),ros::Time::now(),"\test1","\test2"));
+  }
+
+  void processImage(cv::Mat& image, cv::Mat& image_gray) {
+    // alternative way is to grab, then retrieve; allows for
+    //  multiple grab when processing below frame rate - v4l keeps a
+    // number of frames buffered, which can lead to significant lag
+    //      m_cap.grab();
+    //      m_cap.retrieve(image);
+
+    // detect April tags (requires a gray scale image)
+    cv::Mat imageUndistorted;
+    undistort(image, imageUndistorted, m_cameraMatrix, m_distCoeffs);
+    cv::cvtColor(image, image_gray, CV_BGR2GRAY);
+    cv::cvtColor(imageUndistorted, image_gray, CV_BGR2GRAY);
+    double t0=0.0;
+    if (m_timing) {
+      t0 = tic();
+    }
+    vector<AprilTags::TagDetection> detections = m_tagDetector->extractTags(image_gray);
+    if (m_timing) {
+      double dt = tic()-t0;
+      cout << "Extracting tags took " << dt << " seconds." << endl;
+    }
+
+    // print out each detection
+    //cout << detections.size() << " tags detected:" << endl;
+    for (unsigned int i=0; i<detections.size(); i++) {
+      print_detection(detections[i]);
+    }
+
+    //overlay time 
+    ros::Time ros_time =ros::Time::now();
+    char buf[1024]      = "";
+    char buf3[1024]     = "";
+    time_t t = ros_time.sec;
+    struct tm *tms = localtime(&t);
+    strftime(buf, 1024, "%Y-%m-%d-%H-%M-%S", tms);
+    sprintf(buf3,"%3i",int(ros_time.nsec*1e-6));
+    std::stringstream buf2;
+    buf2 << "ROS TIME ";
+    buf2  << buf << " : " << buf3 << "ms";
+    cv::putText(imageUndistorted, buf2.str(), cvPoint(30,30), 
+    cv::FONT_HERSHEY_COMPLEX_SMALL, 0.5, cvScalar(0,255,255), 1, CV_AA);
+    
+
+    // show the current image including any detections
+    if (m_draw) {
+      for (unsigned int i=0; i<detections.size(); i++) {
+        // also highlight in the image
+        detections[i].draw(imageUndistorted);
+        //detections[i].draw(image);
+      }
+      //imshow(windowName, image); // OpenCV call
+      
+      /*cv::Mat intrinsic = cv::Mat::zeros(3, 3, CV_32FC1);
+      cv::Mat distCoeffs = cv::Mat(5, 1, CV_32FC1);
+      intrinsic.ptr<float>(0)[0] = m_fx;
+      intrinsic.ptr<float>(1)[1] = m_fy;
+      intrinsic.ptr<float>(0)[2] = m_px;
+      intrinsic.ptr<float>(1)[2] = m_py;
+      intrinsic.ptr<float>(2)[2] = 1;
+      distCoeffs.ptr<float>(0)[0] = m_dist[0];
+      distCoeffs.ptr<float>(1)[0] = m_dist[1];
+      distCoeffs.ptr<float>(2)[0] = m_dist[2];
+      distCoeffs.ptr<float>(3)[0] = m_dist[3];
+      distCoeffs.ptr<float>(4)[0] = m_dist[4];*/
+      //cout << intrinsic << endl;
+      
+      
+      //cout << "tester" << m_test_cube << endl;
+      if (m_test_cube){
+       	//draw line
+        /*double pt1xs[4] = {10, 10, 20, 20};
+         double pt1ys[4] = {10, 20, 20, 10};  
+         double pt2xs[4] = {10, 20, 20, 10};
+         double pt2ys[4] = {20, 20, 10, 10};
+         for(int i=0; i<4 ; i++){
+         cv::Point2f pt1(pt1xs[i], pt1ys[i]), pt2(pt2xs[i], pt2ys[i]);
+         //cout << pt.x << ", " << pt.y << endl;
+         cv::line( imageUndistorted, pt1, pt2, cv::Scalar(0,0,255), 1, CV_AA);
+	 }*/
+        
+         //Search for tag 0 in tag list
+         for (unsigned int i=0; i<detections.size(); i++) {
+		if (detections[i].id==0){ //if Id is 0 
+		    //grab translation and rotation
+                    Eigen::Vector3d translation;
+                    Eigen::Matrix3d rotation;
+                    detections[i].getRelativeTranslationRotation(m_tagSize, m_fx, m_fy, m_px, m_py,
+                                             translation, rotation);
+                    Eigen::Matrix3d F;
+                    F << 1,   0,  0,
+                         0,  -1,  0,
+                         0,   0,  1;
+                    Eigen::Matrix3d fixed_rot = F*rotation;
+                    F << -1,    0,   0,
+                          0,    1,   0,
+                          0,    0,  -1;
+                    fixed_rot = F*fixed_rot;
+                     F << -1,    0,   0,
+                          0,    1,   0,
+                          0,    0,   -1;
+                    fixed_rot = fixed_rot*F;
+                    //double yaw, pitch, roll;
+                    //wRo_to_euler(fixed_rot, yaw, pitch, roll);
+     		    //cout << detections[i].id << endl; //print_detection(detections[i]);
+                    
+		    
+                    cv::Mat rvec=cv::Mat::eye(3,3,cv::DataType<double>::type); // rotation matrix
+		    cv::Mat T=cv::Mat::ones(3,1,cv::DataType<double>::type); // translation vector
+		    T.ptr<double>(0)[0] = -translation[1];
+		    T.ptr<double>(1)[0] = -translation[2];
+		    T.ptr<double>(2)[0] = translation[0];
+                    rvec.ptr<double>(0)[0] = fixed_rot(0,0);
+                    rvec.ptr<double>(0)[1] = fixed_rot(0,1);
+                    rvec.ptr<double>(0)[2] = fixed_rot(0,2);
+		    rvec.ptr<double>(1)[0] = fixed_rot(1,0);
+                    rvec.ptr<double>(1)[1] = fixed_rot(1,1);
+                    rvec.ptr<double>(1)[2] = fixed_rot(1,2);
+                    rvec.ptr<double>(2)[0] = fixed_rot(2,0);
+                    rvec.ptr<double>(2)[1] = fixed_rot(2,1);
+                    rvec.ptr<double>(2)[2] = fixed_rot(2,2);
+                    cv::projectPoints(m_objectPoints, rvec, T, m_cameraMatrix, m_distCoeffs, m_projectedPoints);
+                    //cout << m_projectedPoints << endl;
+		    for(int i=0; i<12 ; i++){
+                        if (i==0){
+			  cv::line( imageUndistorted, m_projectedPoints[m_edges1[i]], m_projectedPoints[m_edges2[i]], cv::Scalar(255,0,0), 2, CV_AA);                        
+			}
+			else if(i==3){
+			  cv::line( imageUndistorted, m_projectedPoints[m_edges1[i]], m_projectedPoints[m_edges2[i]], cv::Scalar(0,0,255), 1, CV_AA);
+			}
+			else{
+			  cv::line( imageUndistorted, m_projectedPoints[m_edges1[i]], m_projectedPoints[m_edges2[i]], cv::Scalar(0,255,255), 1, CV_AA);
+			}
+		 	
+		     }
+                }
+    	  }   
+         
+        
+
+      }
+      imshow("undistort", imageUndistorted);
+    }
+
+    if (m_outputVideo.isOpened() && m_write_vedio){
+	m_outputVideo.write(imageUndistorted);
+       // exit(1);
+    }
+    
+
+
+    if (m_image_transport){    
+    cv_bridge::CvImagePtr img_ptr(new cv_bridge::CvImage);
+    //img_ptr = cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::BGR8);
+    //img_ptr->header.time
+    img_ptr->image = image;
+    img_ptr->encoding = sensor_msgs::image_encodings::BGR8;
+    sensor_msgs::ImagePtr img_msg = img_ptr->toImageMsg();
+    img_msg->header.stamp = ros::Time::now();
+    img_msg->header.frame_id = "/" +  m_tf_prefix + "/" + m_camera_name;
+    img_msg->width = m_width; 
+    img_msg->height = m_height;
+    img_msg->encoding = "bgr8";
+    img_msg->is_bigendian = false;
+    img_msg->step = m_width*3;
+    
+    
+    sensor_msgs::CameraInfoPtr cinfo(new sensor_msgs::CameraInfo(m_cinfo->getCameraInfo()));
+    //cinfo->height = m_height;
+    //cinfo->width = m_width;
+    cinfo->header.frame_id = "/" + m_tf_prefix + "/" +m_camera_name;
+    //cinfo->header.stamp = img_msg->header.stamp;
+    m_image_pub.publish(img_msg,cinfo);
+   
+    
+
+    }
+  }
+
+  // Load and process a single image
+  void loadImages() {
+    cv::Mat image;
+    cv::Mat image_gray;
+
+    for (list<string>::iterator it=m_imgNames.begin(); it!=m_imgNames.end(); it++) {
+      image = cv::imread(*it); // load image with opencv
+      processImage(image, image_gray);
+      while (cv::waitKey(100) == -1) {}
+    }
+  }
+
+  // Video or image processing?
+  bool isVideo() {
+    return m_imgNames.empty();
+  }
+
+  // The processing loop where images are retrieved, tags detected,
+  // and information about detections generated
+  void loop() {
+
+    cv::Mat image;
+    cv::Mat image_gray;
+
+    int frame = 0;
+    double last_t = tic();
+    while (ros::ok()) {
+
+      // capture frame
+      m_cap >> image;
+
+      processImage(image, image_gray);
+
+      // print out the frame rate at which image frames are being processed
+      frame++;
+      if (frame % 10 == 0) {
+        double t = tic();
+        cout << "  " << 10./(t-last_t) << " fps" << endl;
+        last_t = t;
+      }
+
+      // exit if any key is pressed
+      if (cv::waitKey(1) >= 0) break;
+    }
+  }
+
+}; // Demo
+
+
+// here is were everything begins
+int main(int argc, char* argv[]) {
+
+  //ROS init
+  ros::init(argc, argv, "apriltag_minimal");
+  ros::NodeHandle n;
+
+
+  //publsher for visualizaiton markers
+
+  Demo demo(n);
+
+  // grab parameters from ros parameter server
+    
+
+
+  // process command line options
+  demo.parseOptions(argc, argv);
+
+  // grab parameters from ros parameter server
+  
+
+  demo.setup();
+
+  if (demo.isVideo()) {
+    cout << "Processing video" << endl;
+
+    // setup image source, window for drawing, serial port...
+    demo.setupVideo();
+
+    // the actual processing loop where tags are detected and visualized
+    demo.loop();
+
+  } else {
+    cout << "Processing image" << endl;
+
+    // process single image
+    demo.loadImages();
+
+  }
+
+  return 0;
+}
